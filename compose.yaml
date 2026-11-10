@@ -1,0 +1,18 @@
+services:
+  api-a:
+    build: .
+    environment:
+      INSTANCE_ID: api-a
+  api-b:
+    build: .
+    environment:
+      INSTANCE_ID: api-b
+  proxy:
+    image: nginx:alpine
+    depends_on:
+      - api-a
+      - api-b
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

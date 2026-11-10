@@ -1,0 +1,3 @@
+defaultNamespace: ovh-health
+correctDrift:
+  enabled: false

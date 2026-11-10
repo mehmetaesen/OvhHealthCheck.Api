@@ -1,0 +1,66 @@
+name: Publish to Rancher Fleet
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ovh-health-fleet-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and publish container
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image="$repository:$GITHUB_SHA"
+          docker build --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -t "$image" .
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          digest_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")
+          digest="${digest_ref##*@}"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "RELEASE_IMAGE=$repository@$digest" >> "$GITHUB_ENV"
+
+      - name: Publish deployment manifests
+        run: |
+          master_sha=$(git ls-remote --exit-code origin refs/heads/master | cut -f1)
+          if [[ "$master_sha" != "$GITHUB_SHA" ]]; then
+            echo "master advanced while this image was building. Skipping deployment."
+            exit 0
+          fi
+
+          staging=$(mktemp -d)
+          cp -R k8s "$staging/"
+          sed -i "s|image: ovh-healthcheck:local|image: $RELEASE_IMAGE|g" "$staging/k8s/workload.yaml"
+          grep -F "image: $RELEASE_IMAGE" "$staging/k8s/workload.yaml"
+
+          if git ls-remote --exit-code origin refs/heads/fleet-deploy; then
+            git fetch origin refs/heads/fleet-deploy:refs/remotes/origin/fleet-deploy
+            git switch -c fleet-deploy --track origin/fleet-deploy
+          else
+            [[ $? == 2 ]]
+            git switch --orphan fleet-deploy
+          fi
+          mkdir -p k8s
+          cp "$staging"/k8s/*.yaml k8s/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s
+          if ! git diff --cached --quiet; then
+            git commit -m "Deploy $GITHUB_SHA"
+            git push origin HEAD:refs/heads/fleet-deploy
+          fi
+

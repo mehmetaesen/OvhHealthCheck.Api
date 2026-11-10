@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ovh-health
+  namespace: ovh-health
+spec:
+  tls:
+    - hosts:
+        - hello.voltgamers.com
+      secretName: hello-voltgamers-tls
+  rules:
+    - host: hello.voltgamers.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ovh-health
+                port:
+                  number: 80
