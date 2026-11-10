@@ -27,7 +27,8 @@ jobs:
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           image="$repository:$GITHUB_SHA"
           # Publish a single image manifest to avoid GHCR rejecting the attestation index.
-          docker build --provenance=false --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -t "$image" .
+          docker build --provenance=false --build-arg "BUILD_COMMIT=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -t "$image" .
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$image"
           digest_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")

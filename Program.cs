@@ -5,6 +5,13 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 var instance = app.Configuration["INSTANCE_ID"] ?? $"{Environment.MachineName}-{Environment.ProcessId}";
+var commit = app.Configuration["BUILD_COMMIT"] ?? "local";
+
+app.MapGet("/version", (HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(new { commit, instance });
+});
 
 app.MapHealthChecks("/", new HealthCheckOptions
 {
