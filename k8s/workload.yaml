@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/mehmetaesen/ovhhealthcheck.api@sha256:49a0f768171c7f3963afc752a70716eceb2c8f66ea79dacd1dfe198c3c95b270
+          image: ghcr.io/mehmetaesen/ovhhealthcheck.api@sha256:1b6dccf8a8e1a82ff9b8fa526ba2a628240334aefb218c75a40e8eb70c4aff24
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -63,7 +63,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/mehmetaesen/ovhhealthcheck.api@sha256:49a0f768171c7f3963afc752a70716eceb2c8f66ea79dacd1dfe198c3c95b270
+          image: ghcr.io/mehmetaesen/ovhhealthcheck.api@sha256:1b6dccf8a8e1a82ff9b8fa526ba2a628240334aefb218c75a40e8eb70c4aff24
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
