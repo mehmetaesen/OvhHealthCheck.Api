@@ -1,72 +1,132 @@
 # OVH Health Check API
 
-ASP.NET Core 10 API, `/` adresinde sağlık durumunu ve yanıt veren kopyayı gösterir. HTTP yanıtında aynı kopya kimliği `X-Instance` başlığında da bulunur. `/healthz` Kubernetes probe adresidir. Sağlık kontrolü API'nin HTTP isteklerine yanıt verebildiğini ölçer. İki kopya tek makinedeyse makine kapanınca ikisi de durur.
+ASP.NET Core 10 API, `/` isteğine `healthy` ve yanıtı veren kopyanın kimliğini döndürür. Aynı kimlik `X-Instance` HTTP başlığında da bulunur. Kubernetes, Pod’un trafiğe hazır olup olmadığını ve çalışmaya devam ettiğini `/healthz` üzerinden kontrol eder.
 
-## Tek makinede Docker Compose denemesi
+```text
+Yayın  master → GitHub Actions → GHCR + fleet-deploy → Rancher Fleet → RKE2
+Trafik hello.voltgamers.com → Caddy → ovh-health Service → A veya B Pod’u
+```
 
-Docker Desktop Linux motoru çalışırken:
+## 1. İki kopyayı yerelde çalıştır
+
+Proje klasöründe Docker Desktop’ın Linux motorunu aç ve Compose’u başlat.
 
 ```powershell
+docker info --format '{{.OSType}}'
 docker compose up -d --build
+docker compose ps
 curl.exe -fsS http://localhost:8080/
 ```
 
-Tarayıcıda [localhost:8080](http://localhost:8080/) adresini açın. Birkaç kez yenilediğinizde aşağıdaki gibi `api-a` veya `api-b` görürsünüz.
-
-```text
-healthy
-instance: api-a
-```
-
-Aynı URL'yi kullanarak sırayla her kopyayı durdurun. Yeniden başlatılan kopyanın hazır olması ve NGINX'in adresi yeniden çözmesi birkaç saniye sürebilir.
+İlk komut `linux` döndürdüğünde Compose çalıştırılabilir. [localhost:8080](http://localhost:8080/) adresinde `healthy` ve `instance: api-a` veya `instance: api-b` görünür. NGINX iki kopyaya aynı adres üzerinden erişim sağlar.
 
 ```powershell
 docker compose stop api-a
-curl.exe -fsS http://localhost:8080/   # api-b
+curl.exe -fsS http://localhost:8080/  # api-b
 docker compose start api-a
 ```
 
+A hazır olduktan sonra B’yi durdurarak testi ters yönde tekrarla. Test sonunda B’yi de başlat.
+
 ```powershell
 docker compose stop api-b
-curl.exe -fsS http://localhost:8080/   # api-a
+curl.exe -fsS http://localhost:8080/  # api-a
 docker compose start api-b
 ```
 
-İki kopyayı durdurunca aynı URL hata döner. Deneme bitince `docker compose down` ile konteynerleri kaldırabilirsiniz.
+`dockerDesktopLinuxEngine` bağlantısı yoksa Docker Desktop’ın motorunun açılmasını bekle. Ubuntu entegrasyonu uyarısı çıkarsa Windows PowerShell’den yapılan bu test için **Skip WSL distro integration** seçilebilir. Docker motoru açılışta takılırsa açık WSL işlerini kaydet, Docker Desktop’ı kapat, PowerShell’de `wsl --shutdown` çalıştır ve Docker Desktop’ı tekrar aç.
 
-## GitHub Actions ve Rancher Fleet
+## 2. Projeyi GitHub’a gönder
 
-`master` dalına push veya PR merge geldiğinde GitHub Actions, API imajını GHCR'a gönderir. Ardından imajın digest'ini içeren manifestleri `fleet-deploy` dalına yazar. Rancher Fleet bu dalı izler ve hedef cluster'a dağıtır.
-
-1. İlk `master` push'undan sonra GitHub **Actions** ekranında **Publish to Rancher Fleet** çalışmasının başarılı olduğunu ve `fleet-deploy` dalının oluştuğunu kontrol edin. Repository politikası workflow'un bu dala yazmasına ve GHCR paketi yayınlamasına izin vermelidir.
-2. Rancher **Continuous Delivery → Git Repos** bölümünde bu GitHub deposunu ekleyin. Branch olarak `fleet-deploy`, path olarak `k8s` ve hedef olarak uygulamanın çalışacağı cluster'ı seçin. Özel GitHub deposu için Fleet'e okuma yetkisi verin.
-3. GHCR paketi özelse hedef cluster'da `ovh-health` namespace'inde bir registry secret oluşturun ve namespace'in `default` ServiceAccount'una `imagePullSecrets` olarak ekleyin. Registry hesabının paketi okuma yetkisi olmalı. Secret'ı Git'e koymayın. Secret eklendiğinde daha önce oluşturulmuş Pod'ları yeniden oluşturun.
-4. Fleet'te GitRepo'nun **Ready** durumunu ve hedef cluster'da **Explore → Workloads** altında `ovh-health-a` ile `ovh-health-b` Deployment'larının hazır olduğunu kontrol edin. Tek makinede denemek için tek node'lu cluster seçin.
-
-### Alan adı ve HTTPS
-
-Cluster'da çalışan bir Ingress controller olmalı. Gerekirse `k8s/ingress.yaml` dosyasında `spec.ingressClassName` alanına controller'ın sınıfını yazın ve değişikliği `master` dalına gönderin. `hello.voltgamers.com` DNS kaydını controller'ın dış IP'sine veya hostname'ine yönlendirin. Alan adına ait geçerli sertifika ve anahtarla TLS Secret oluşturun.
+İlk kurulumda GitHub’da boş bir repo oluştur ve **Code → HTTPS** adresini kopyala. Aşağıdaki ilk kurulum komutları henüz Git deposu bulunmayan bir proje klasörü içindir.
 
 ```powershell
-kubectl -n ovh-health create secret tls hello-voltgamers-tls --cert=fullchain.pem --key=privkey.pem
-kubectl -n ovh-health get ingress
-curl.exe -fsS https://hello.voltgamers.com/
+git init -b master
+git add .
+git status --short
+git commit -m "Add health check API and Rancher deployment"
+git remote add origin https://github.com/mehmetaesen/OvhHealthCheck.Api.git
+git push -u origin master
 ```
 
-### Kesinti denemesi
+Depo zaten bağlıysa `git remote -v` ile adresi kontrol et. `Repository not found` hatasında GitHub’da deponun varlığını ve hesabın yazma yetkisini doğrula. Adres farklıysa `git remote set-url origin <HTTPS-URL>` ile düzelt. `master` korumalıysa değişiklikleri PR ile birleştir.
 
-A ve B aynı Service'i paylaşır. Rancher'da veya aşağıdaki komutlarla A'yı 0 kopyaya indirin. [hello.voltgamers.com](https://hello.voltgamers.com/) adresini yenileyince B'nin Pod adı görünmeli. Sonra A'yı geri açın. Yeni bir Fleet dağıtımı, Git'teki kopya sayısını tekrar uygular.
+## 3. GitHub Actions yayınını doğrula
 
-```powershell
-kubectl -n ovh-health get pods -w
-# Ayrı terminalde:
-kubectl -n ovh-health scale deployment/ovh-health-a --replicas=0
-curl.exe -fsS https://hello.voltgamers.com/
-kubectl -n ovh-health scale deployment/ovh-health-a --replicas=1
+`master` dalına push veya PR merge geldiğinde **Publish to Rancher Fleet** çalışır. Workflow Docker imajını GHCR’a gönderir ve yayınlanan imajın digest’ini içeren Kubernetes manifestlerini `fleet-deploy` dalındaki `k8s` klasörüne yazar. Bu dalı workflow oluşturur ve günceller.
+
+GitHub’da **Actions → Publish to Rancher Fleet** altında en yeni çalışmanın başarılı olduğunu ve `fleet-deploy` dalının oluştuğunu kontrol et. Çalışma sıradaysa GitHub arka planda bekletir. Workflow aynı anda bir dağıtım çalıştırır ve bekleyen çalışmalardan en yenisini tutar.
+
+İlk çalışmada GHCR, imaj katmanlarını aldıktan sonra `denied` döndürdü. Workflow’a `--provenance=false` eklenince tek imaj manifestiyle yapılan yeni çalışma başarılı oldu. Workflow dosyasında değişiklik yaptığında `master`a yeni bir commit gönder ve en yeni Actions çalışmasını aç. **Re-run** seçeneği çalışmayı kendi commit’iyle tekrarlar.
+
+## 4. Rancher Fleet’i dağıtım dalına bağla
+
+Rancher’da **Continuous Delivery → App Bundles** ekranını aç. Bu kurulumda hedef Rancher’ın **Active** durumdaki `local` RKE2 cluster’ı olduğu için sağ üstten `fleet-local` workspace’ini seç. `fleet-default` ekranındaki **No clusters in the workspace** mesajı bu kurulumda workspace değiştirerek çözüldü.
+
+**Create App Bundle → Git Repos** ile ilerle.
+
+| Adım | Alan | Değer |
+| --- | --- | --- |
+| Metadata | Name | `ovh-health` |
+| Repository details | Repository URL | `https://github.com/mehmetaesen/OvhHealthCheck.Api.git` |
+| Repository details | Watch ve Branch Name | **A Branch**, `fleet-deploy` |
+| Repository details | Custom paths → Root directory | `k8s` |
+| Target details | Deploy To | `local`. Workspace’te tek hedef buysa **All Clusters in the workspace** kullanılabilir. |
+| Target details | Service Account Name ve Target Namespace | Boş |
+| Advanced | Git Authentication | Herkese açık repo için **None** |
+| Advanced | TLS Certificate Verification | **Require a valid certificate** |
+| Advanced | Enable Polling | Açık |
+| Advanced | Enable self-healing | Kapalı |
+
+**Manually specify config files subpaths** kutusunu boş bırak ve **Create** ile kaydet. Fleet polling ile dağıtım dalını düzenli kontrol eder. Self-healing kapalıyken kesinti testi için replica sayısını Rancher’dan geçici olarak değiştirebilirsin. Yeni bir dağıtım Git’teki replica sayısını tekrar uygulayabilir.
+
+## 5. Kubernetes kaynaklarını doğrula
+
+**local → Explore → Workloads → Deployments** altında `ovh-health` namespace’ini seç. `ovh-health-a` ve `ovh-health-b` ayrı ayrı `1/1` olmalı. **Service Discovery → Services** altında `ovh-health` Service’inin `80` portunu ve `app=ovh-health` selector’ını kontrol et. Bu selector iki Deployment’ın hazır Pod’larını kapsar.
+
+Hedef cluster’a bağlı bir kubectl oturumunda aynı kontrolü komut satırından da yapabilirsin.
+
+```bash
+kubectl -n ovh-health get deployments,pods,svc,ingress
 ```
 
-DNS hazır değilse cluster içinden Service'i test edin.
+Pod’lar `ImagePullBackOff` durumundaysa **Events** bölümündeki hataya bak. GHCR paketi özelse `ovh-health` namespace’inde paketi okuyabilen bir registry Secret oluştur, Pod’ların kullandığı ServiceAccount’a `imagePullSecrets` olarak ekle ve başarısız Pod’ları yeniden oluştur. Kimlik bilgilerini Rancher veya Kubernetes Secret olarak sakla.
 
-```powershell
-kubectl -n ovh-health run health-client --rm -i --restart=Never --image=busybox:1.37 -- sh -c 'while true; do wget -T 2 -qO- http://ovh-health/ || echo request-failed; sleep 1; done'
+## 6. Caddy’yi yeni Service’e yönlendir
+
+Bu VPS’te alan adının dış HTTPS trafiğini Caddy karşılıyor. Rancher’da Traefik Ingress’i görünse de Caddy’nin `hello.voltgamers.com` bloğu eski `hello-web` Service’inin `10.43.46.198:80` adresine gidiyordu. Bu yüzden yeni Pod’lar hazırken tarayıcıda eski Hello World sayfası görünüyordu.
+
+Rancher’daki **Services** ekranından `ovh-health` Service’inin güncel ClusterIP’sini al. Bu kurulumda `10.43.218.210` idi. Caddy’nin çalıştığı VPS’te önce Service’i doğrudan test et.
+
+```bash
+curl -fsS --max-time 5 http://10.43.218.210:80/
 ```
+
+`healthy` ve `instance: ovh-health-...` görürsen `sudoedit /etc/caddy/Caddyfile` ile yalnızca ilgili HTTPS bloğunun `reverse_proxy` hedefini güncelle.
+
+```caddyfile
+hello.voltgamers.com {
+    reverse_proxy 10.43.218.210:80
+}
+```
+
+Yapılandırmayı doğrula, Caddy’yi yeniden yükle ve dış adresten yanıtı kontrol et.
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile &&
+sudo systemctl reload caddy &&
+curl -fsS https://hello.voltgamers.com/
+```
+
+Service silinip yeniden oluşturulursa ClusterIP değişebilir. Bu durumda Caddy hedefini Rancher’daki güncel IP ile karşılaştır.
+
+## 7. Canlı A/B kesinti testini yap
+
+[hello.voltgamers.com](https://hello.voltgamers.com/) adresini aç ve `healthy` yanıtını doğrula. Rancher’da **Workloads → Deployments** altında şu sırayla ilerle.
+
+1. `ovh-health-a` kopya sayısını `0` yap ve A Pod’unun durmasını bekle. Aynı URL’yi yenile. `healthy` ve `instance: ovh-health-b-...` görünmeli.
+2. A’yı `1`e geri al ve `1/1` olmasını bekle.
+3. `ovh-health-b` kopya sayısını `0` yap ve B Pod’unun durmasını bekle. Aynı URL bu kez `healthy` ve `instance: ovh-health-a-...` döndürmeli.
+4. B’yi `1`e geri al ve iki Deployment’ın da `1/1` olduğunu kontrol et.
+
+Bu test tek uygulama kopyasının durmasını kapsar. İki Pod aynı node’da çalışıyorsa o node’un kaybı ikisini de etkiler.
